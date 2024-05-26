@@ -1,0 +1,13 @@
+Traceback (most recent call last):
+  File "/home/atras/ros/catkin_ws/src/controller_av/src/mpc_node.py", line 457, in <module>
+    ck, s = cs.calc_spline_course(_X_ref, _Y_ref, ds=config.d_dist)
+  File "/home/atras/ros/catkin_ws/src/controller_av/src/cubic_spline.py", line 186, in calc_spline_course
+    sp = Spline2D(x, y)
+  File "/home/atras/ros/catkin_ws/src/controller_av/src/cubic_spline.py", line 142, in __init__
+    self.s = self.__calc_s(x, y)
+  File "/home/atras/ros/catkin_ws/src/controller_av/src/cubic_spline.py", line 147, in __calc_s
+    dx = np.diff(x)
+  File "<__array_function__ internals>", line 200, in diff
+  File "/home/atras/.local/lib/python3.8/site-packages/numpy/lib/function_base.py", line 1414, in diff
+    raise ValueError("diff requires input that is at least one dimensional")
+ValueError: diff requires input that is at least one dimensional

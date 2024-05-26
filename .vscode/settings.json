@@ -1,0 +1,12 @@
+{
+    "python.autoComplete.extraPaths": [
+        "/home/atras/ros/catkin_ws/src/turtlebot3/devel/lib/python3/dist-packages",
+        "/home/atras/ros/catkin_ws/devel/lib/python3/dist-packages",
+        "/opt/ros/noetic/lib/python3/dist-packages"
+    ],
+    "python.analysis.extraPaths": [
+        "/home/atras/ros/catkin_ws/src/turtlebot3/devel/lib/python3/dist-packages",
+        "/home/atras/ros/catkin_ws/devel/lib/python3/dist-packages",
+        "/opt/ros/noetic/lib/python3/dist-packages"
+    ]
+}
