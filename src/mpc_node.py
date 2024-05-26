@@ -6,7 +6,7 @@ import numpy as np
 import tf
 
 from nav_msgs.msg import Odometry, Path
-from geometry_msgs.msg import Twist, PoseStamped, TwistStamped, PoseWithCovarianceStamped
+from geometry_msgs.msg import Twist, PoseStamped, PoseWithCovarianceStamped
 from teb_local_planner.msg import FeedbackMsg
 from tf.transformations import euler_from_quaternion
 import cubic_spline as cs
@@ -23,26 +23,30 @@ class config:
     R = np.diag([0.01, 0.1])  # penalty for inputs
     Rd = np.diag([0.01, 0.1])  # penalty for change of inputs
 
-    dist_stop = 1.5  # stop permitted when dist to goal < dist_stop
-    speed_stop = 0.5 / 3.6  # stop permitted when speed < speed_stop
-    time_max = 500.0  # max simulation time
     iter_max = 5  # max iteration
     target_speed = 10.0 / 3.6  # target speed
-    N_IND = 10  # search index number
 
-    dt = 0.2  # time step
+    dt = 0.1  # time step --> frequency controller = 10 Hz
 
     d_dist = 1.0  # dist step
     du_res = 0.1  # threshold for stopping iteration
 
     # vehicle config
-    RF = 3.3  # [m] distance from rear to vehicle front end of vehicle
-    RB = 0.8  # [m] distance from rear to vehicle back end of vehicle
-    W = 2.4  # [m] width of vehicle
-    WD = 0.7 * W  # [m] distance between left-right wheels
-    WB = 2.5  # [m] Wheel base
-    TR = 0.44  # [m] Tyre radius
-    TW = 0.7  # [m] Tyre width
+    RF = 0.5 - 0.05  # [m] distance from rear to vehicle front end of vehicle
+    RB = 0.05        # [m] distance from rear to vehicle back end of vehicle
+    W = 0.3          # [m] width of vehicle
+    WD = 0.3 + 2 * 0.05  # [m] distance between left-right wheels, calculated as base_width + 2 * axle_offset
+    WB = 0.5 - 2 * 0.05  # [m] Wheel base, calculated as base_length - 2 * axle_offset
+    TR = 0.1         # [m] Tyre radius
+    TW = 0.08        # [m] Tyre width
+
+    # RF = 3.3  # [m] distance from rear to vehicle front end of vehicle
+    # RB = 0.8  # [m] distance from rear to vehicle back end of vehicle
+    # W = 2.4  # [m] width of vehicle
+    # WD = 0.7 * W  # [m] distance between left-right wheels
+    # WB = 2.5  # [m] Wheel base
+    # TR = 0.44  # [m] Tyre radius
+    # TW = 0.7  # [m] Tyre width
 
     steer_max = np.deg2rad(45.0)  # max steering angle [rad]
     steer_change_max = np.deg2rad(30.0)  # maximum steering speed [rad/s]
@@ -50,7 +54,7 @@ class config:
     speed_min = -20.0 / 3.6  # minimum speed [m/s]
     acceleration_max = 1.0  # maximum acceleration [m/s2]
 
-class State_Publisher:
+class MPC_Node:
     def __init__(self):
         rospy.Subscriber("/odom", Odometry, self.odom_callback)
         rospy.Subscriber("/move_base/TebLocalPlannerROS/teb_feedback", FeedbackMsg, self.path_callback) 
@@ -58,21 +62,14 @@ class State_Publisher:
         rospy.Subscriber('/amcl_pose', PoseWithCovarianceStamped, self.amclCB)
         # rospy.Subscriber("/move_base/TebLocalPlannerROS/local_plan", Path, self.path_callback)
 
-
         self.latest_odom = None
         self.latest_plan = None
         self.tf_listener = tf.TransformListener()
+        self._goal_received = False
+        self._goal_reached = False
+        self._goal_pos = {'x': 0.0, 'y': 0.0}
+        self._goalRadius = 0.05  # Set this to the appropriate radius value
 
-        self.path_x = None
-        self.path_y = None
-        self.path_psi = None
-
-        self.odom_x = None
-        self.odom_y = None
-        self.odom_psi = None
-        self.odom_x_dot = None
-        self.odom_y_dot = None
-        self.odom_psi_dot = None
 
     def odom_callback(self, data):
         self.latest_odom = data
@@ -86,7 +83,6 @@ class State_Publisher:
         # Convert quaternion to euler angles
         (roll, pitch, yaw) = euler_from_quaternion(orientation_list)
         self.odom_psi = yaw # in radians
-
 
         self.odom_x_dot = self.latest_odom.twist.twist.linear.x
         self.odom_y_dot = self.latest_odom.twist.twist.linear.y
@@ -103,8 +99,6 @@ class State_Publisher:
         self.path_psi_dot = []
         try:
             self.tf_listener.waitForTransform('/odom', message.header.frame_id, rospy.Time(0), rospy.Duration(4.0))
-            (trans, rot) = self.tf_listener.lookupTransform('/odom', message.header.frame_id, rospy.Time(0))
-            rotation_matrix = tf.transformations.quaternion_matrix(rot)
 
             for data in self.latest_plan:
                 pose_stamped = PoseStamped()
@@ -122,23 +116,8 @@ class State_Publisher:
                 (roll, pitch, yaw) = tf.transformations.euler_from_quaternion(orientation_list)
                 self.path_psi.append(yaw)
 
-
-                twist_stamped = TwistStamped()
-                twist_stamped.header.frame_id = message.header.frame_id
-                twist_stamped.header.stamp = rospy.Time(0)  # Use latest available transform
-                twist_stamped.twist.linear = data.velocity.linear
-                twist_stamped.twist.angular = data.velocity.angular
-
-                linear_velocity = data.velocity.linear
-                transformed_linear_velocity = rotation_matrix.dot([linear_velocity.x, linear_velocity.y, linear_velocity.z, 0.0])[:3]
-                self.path_x_dot.append(transformed_linear_velocity[0])
-                # self.path_x_dot.append(data.velocity.linear.x)
-                
-                # Transform angular velocity
-                angular_velocity = data.velocity.angular
-                transformed_angular_velocity = rotation_matrix.dot([angular_velocity.x, angular_velocity.y, angular_velocity.z, 0.0])[:3]
-                self.path_psi_dot.append(transformed_angular_velocity[2])
-                # self.path_psi_dot.append(data.velocity.angular.z)
+                self.path_x_dot.append(data.velocity.linear.x)
+                self.path_psi_dot.append(data.velocity.angular.z)
 
                 #=== PROGRAM LAMA =====
                 # self.path_x.append(data.pose.position.x)
@@ -156,6 +135,7 @@ class State_Publisher:
         self._goal_received = True
         self._goal_reached = False
         rospy.loginfo("Goal Received :goalCB!")
+        return self._goal_received, self._goal_reached
 
     def amclCB(self, amclMsg):
         if self._goal_received:
@@ -166,8 +146,8 @@ class State_Publisher:
                 self._goal_received = False
                 self._goal_reached = True
                 rospy.loginfo("Goal Reached!")
+        return self._goal_received, self._goal_reached
 
-    
     def collect_car_state(self):
         if self.latest_plan is not None and self.latest_odom is not None:
             _X_ref = self.path_x
@@ -208,42 +188,82 @@ class State_Publisher:
         # print("==================")
         return _X_ref, _Y_ref, _Psi_ref, _X_pos, _Y_pos, _Psi_pos, X_dot, Y_dot,Psi_dot,_X_ref_dot,_Psi_ref_dot
     
-class PATH:
-    def __init__(self, cx, cy, cyaw, ck):
-        self.cx = cx
-        self.cy = cy
-        self.cyaw = cyaw
-        self.ck = ck
-        self.length = len(cx)
-        self.ind_old = 0
+    def run(self):
+        if not self._goal_received and not self._goal_reached :
+            rospy.loginfo("Waiting for Goal")
+        
+        if not self._goal_received and self._goal_reached:
+            rospy.loginfo("Goal is Reached")
+            cmd_vel_msg = Twist()
+            cmd_vel_msg.linear.x = 0
+            cmd_vel_msg.angular.z = 0
+            pub.publish(cmd_vel_msg)
+            rospy.loginfo("Published x_dot: %f and psi_dot: %f to /cmd_vel", cmd_vel_msg.linear.x, cmd_vel_msg.angular.z)
 
-    def nearest_index(self, node):
-        """
-        calc index of the nearest node in N steps
-        :param node: current information
-        :return: nearest index, lateral distance to ref point
-        """
+        if self._goal_received and not self._goal_reached:
+            rospy.loginfo("Starting Control Loop")
+            if self.latest_plan is None or self.latest_odom is None:
+                self.skip_loop()
+            elif len(self.path_x)<2 or len(self.path_y)<2 or len(self.path_psi)<2 or len(self.path_x_dot)<2 :
+                self.skip_loop()
+            else:
+                _X_ref = self.path_x
+                _Y_ref = self.path_y
+                _Psi_ref = self.path_psi
+                _X_ref_dot = self.path_x_dot
+                # _Psi_ref_dot = self.path_psi_dot
 
-        dx = [node.x - x for x in self.cx[self.ind_old: (self.ind_old + config.N_IND)]]
-        dy = [node.y - y for y in self.cy[self.ind_old: (self.ind_old + config.N_IND)]]
-        dist = np.hypot(dx, dy)
+                _X_pos = self.odom_x
+                _Y_pos = self.odom_y
+                _Psi_pos = self.odom_psi
+                X_dot = self.odom_x_dot
+                # Y_dot = self.odom_y_dot
+                # Psi_dot = self.odom_psi_dot
 
-        ind_in_N = int(np.argmin(dist))
-        ind = self.ind_old + ind_in_N
-        self.ind_old = ind
+                if (len(_X_ref)>config.T):
+                    N = config.T
+                else:
+                    N = len(_X_ref)-1
 
-        rear_axle_vec_rot_90 = np.array([[math.cos(node.yaw + math.pi / 2.0)],
-                                         [math.sin(node.yaw + math.pi / 2.0)]])
+                # print("ref_x ", len(_X_ref))
+                # print("ref_y ", len(_Y_ref))
+                # print("ref_psi ", len(_Psi_ref))
+                # print("speed_profile", len(_X_ref_dot))
+                delta_opt, a_opt = None, None
+                a_exc, delta_exc = 0.0, 0.0
 
-        vec_target_2_rear = np.array([[dx[ind_in_N]],
-                                      [dy[ind_in_N]]])
+                z_ref = np.zeros((config.NX, N + 1))
+                z_ref[0] = _X_ref[0:N+ 1]
+                z_ref[1] = _Y_ref[0:N+ 1]
+                z_ref[2] = _X_ref_dot[0:N+ 1]
+                z_ref[3] = _Psi_ref[0:N+ 1]
 
-        er = np.dot(vec_target_2_rear.T, rear_axle_vec_rot_90)
-        er = er[0][0]
+                z0 = [_X_pos, _Y_pos, X_dot, _Psi_pos]
 
-        return ind, er
-    
-class Node:
+                a_opt, delta_opt, x_opt, y_opt, yaw_opt, v_opt = linear_mpc_control(z_ref, z0, a_opt, delta_opt, N)
+
+                if delta_opt is not None:
+                    delta_exc, a_exc = delta_opt[0], a_opt[0]
+
+                # print("=============")
+                # print("x_opt", x_opt)
+                # print("y_opt", y_opt)
+                # print("yaw_opt", yaw_opt)
+                print("v_opt", v_opt)
+                print("delta_exc", delta_exc)
+                print("a_exc", a_exc)
+
+                cmd_vel_msg = Twist()
+                cmd_vel_msg.linear.x = a_exc
+                cmd_vel_msg.angular.z = delta_exc
+                pub.publish(cmd_vel_msg)
+                rospy.loginfo("Published x_dot: %f and psi_dot: %f to /cmd_vel", cmd_vel_msg.linear.x, cmd_vel_msg.angular.z)
+
+    def skip_loop(self):
+        print("========== Skip the loop =============")
+
+
+class Car_States:
     def __init__(self, x=0.0, y=0.0, yaw=0.0, v=0.0, direct=1.0):
         self.x = x
         self.y = y
@@ -279,6 +299,7 @@ class Node:
             return config.speed_min
 
         return v
+    
     
 def calc_spline_course(x, y, ds=0.1):
     sp = cs.Spline2D(x, y)
@@ -418,7 +439,7 @@ def predict_states_in_T_step(z0, a, delta, z_ref, N):
     for i in range(config.NX):
         z_bar[i, 0] = z0[i]
 
-    node = Node(x=z0[0], y=z0[1], v=z0[2], yaw=z0[3])
+    node = Car_States(x=z0[0], y=z0[1], v=z0[2], yaw=z0[3])
 
     for ai, di, i in zip(a, delta, range(1, N + 1)):
         node.update(ai, di, 1.0)
@@ -516,66 +537,8 @@ if __name__ == '__main__':
     rospy.init_node('controller_mpc_node')
     rospy.loginfo("Node has been started")
     rate = rospy.Rate(10)
-    State_Pub = State_Publisher()
+    mpc_node = MPC_Node()
     pub = rospy.Publisher("/cmd_vel", Twist, queue_size=10 )
     while not rospy.is_shutdown():
-        _X_ref, _Y_ref, _Psi_ref, _X_pos, _Y_pos, _Psi_pos, X_dot, Y_dot,Psi_dot, _X_ref_dot,_Psi_ref_dot = State_Pub.collect_car_state()
-
-        if(X_dot) :
-            # ck, s = calc_spline_course(_X_ref, _Y_ref, ds=config.d_dist)
-            # sp = calc_speed_profile(_X_ref, _Y_ref, _Psi_ref, config.target_speed)
-            # ref_path = PATH(_X_ref, _Y_ref, _Psi_ref, ck)
-            if (len(_X_ref)>config.T):
-                N = config.T
-            else:
-                N = len(_X_ref)-1
-
-
-            node = Node(x=_X_pos, y=_Y_pos, yaw=_Psi_pos, v=X_dot)
-
-            x = [node.x]
-            y = [node.y]
-            yaw = [node.yaw]
-            v = [node.v]
-
-            print("ref_x ", len(_X_ref))
-            print("ref_y ", len(_Y_ref))
-            print("ref_psi ", len(_Psi_ref))
-            print("speed_profile", len(_X_ref_dot))
-            delta_opt, a_opt = None, None
-            a_exc, delta_exc = 0.0, 0.0
-
-            # LOOP PROCESS
-
-            # z_ref, target_ind = calc_ref_trajectory_in_T_step(node, ref_path, sp)
-
-            z_ref = np.zeros((config.NX, N + 1))
-            z_ref[0] = _X_ref[0:N+ 1]
-            z_ref[1] = _Y_ref[0:N+ 1]
-            z_ref[2] = _X_ref_dot[0:N+ 1]
-            z_ref[3] = _Psi_ref[0:N+ 1]
-
-
-            z0 = [node.x, node.y, node.v, node.yaw]
-
-            a_opt, delta_opt, x_opt, y_opt, yaw_opt, v_opt = linear_mpc_control(z_ref, z0, a_opt, delta_opt, N)
-
-            if delta_opt is not None:
-                delta_exc, a_exc = delta_opt[0], a_opt[0]
-
-            node.update(a_exc, delta_exc, 1.0)
-
-            print("=============")
-            print("x_opt", x_opt)
-            print("y_opt", y_opt)
-            print("yaw_opt", yaw_opt)
-            print("v_opt", v_opt)
-            print("delta_exc", delta_exc)
-            print("a_exc", a_exc)
-
-            cmd_vel_msg = Twist()
-            cmd_vel_msg.linear.x = a_exc
-            cmd_vel_msg.angular.z = delta_exc
-            pub.publish(cmd_vel_msg)
-            rospy.loginfo("Published x_dot: %f and psi_dot: %f to /cmd_vel", a_exc, delta_exc)
+        mpc_node.run()
         rate.sleep()
