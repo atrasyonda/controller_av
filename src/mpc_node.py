@@ -50,8 +50,8 @@ class config:
 
     steer_max = np.deg2rad(45.0)  # max steering angle [rad]
     steer_change_max = np.deg2rad(30.0)  # maximum steering speed [rad/s]
-    speed_max = 55.0 / 3.6  # maximum speed [m/s]
-    speed_min = -20.0 / 3.6  # minimum speed [m/s]
+    speed_max = 10  # maximum speed [m/s]
+    speed_min = -1 # minimum speed [m/s]
     acceleration_max = 1.0  # maximum acceleration [m/s2]
 
 class MPC_Node:
@@ -492,17 +492,17 @@ def solve_linear_mpc(z_ref, z_bar, z0, d_bar, N):
     cost = 0.0
     constrains = []
 
-    for t in range(N):
-        cost += cvxpy.quad_form(u[:, t], config.R)
-        cost += cvxpy.quad_form(z_ref[:, t] - z[:, t], config.Q)
+    for i in range(N):
+        cost += cvxpy.quad_form(u[:, i], config.R)
+        cost += cvxpy.quad_form(z_ref[:, i] - z[:, i], config.Q)
 
-        A, B, C = calc_linear_discrete_model(z_bar[2, t], z_bar[3, t], d_bar[t])
+        A, B, C = calc_linear_discrete_model(z_bar[2, i], z_bar[3, i], d_bar[i])
 
-        constrains += [z[:, t + 1] == A @ z[:, t] + B @ u[:, t] + C]
+        constrains += [z[:, i + 1] == A @ z[:, i] + B @ u[:, i] + C]
 
-        if t < N - 1:
-            cost += cvxpy.quad_form(u[:, t + 1] - u[:, t], config.Rd)
-            constrains += [cvxpy.abs(u[1, t + 1] - u[1, t]) <= config.steer_change_max * config.dt]
+        if i < N - 1:
+            cost += cvxpy.quad_form(u[:, i + 1] - u[:, i], config.Rd)
+            constrains += [cvxpy.abs(u[1, i + 1] - u[1, i]) <= config.steer_change_max * config.dt]
 
     cost += cvxpy.quad_form(z_ref[:, N] - z[:, N], config.Qf)
 
