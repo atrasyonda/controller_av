@@ -40,14 +40,6 @@ class config:
     TR = 0.1         # [m] Tyre radius
     TW = 0.08        # [m] Tyre width
 
-    # RF = 3.3  # [m] distance from rear to vehicle front end of vehicle
-    # RB = 0.8  # [m] distance from rear to vehicle back end of vehicle
-    # W = 2.4  # [m] width of vehicle
-    # WD = 0.7 * W  # [m] distance between left-right wheels
-    # WB = 2.5  # [m] Wheel base
-    # TR = 0.44  # [m] Tyre radius
-    # TW = 0.7  # [m] Tyre width
-
     steer_max = np.deg2rad(45.0)  # max steering angle [rad]
     steer_change_max = np.deg2rad(30.0)  # maximum steering speed [rad/s]
     speed_max = 10  # maximum speed [m/s]
@@ -113,7 +105,7 @@ class MPC_Node:
                 # Extract yaw from quaternion
                 orientation_q = transformed_pose.pose.orientation
                 orientation_list = [orientation_q.x, orientation_q.y, orientation_q.z, orientation_q.w]
-                (roll, pitch, yaw) = tf.transformations.euler_from_quaternion(orientation_list)
+                (roll, pitch, yaw) = euler_from_quaternion(orientation_list)
                 self.path_psi.append(yaw)
 
                 self.path_x_dot.append(data.velocity.linear.x)
